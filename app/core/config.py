@@ -9,3 +9,8 @@ CURRENCY_SYMBOL = os.getenv('CURRENCY_SYMBOL', '$')
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET')
 if not WEBHOOK_SECRET:
     raise EnvironmentError("CRITICAL: WEBHOOK_SECRET must be set as an environment variable.")
+
+
+
+
+
