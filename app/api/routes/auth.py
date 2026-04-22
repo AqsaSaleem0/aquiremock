@@ -1,5 +1,6 @@
 ﻿import logging
-from typing import Dict
+from datetime import datetime, timedelta
+from typing import Dict, Tuple
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -13,7 +14,8 @@ router = APIRouter(
     tags=["authentication"],
 )
 
-login_store: Dict[str, str] = {}
+# email -> (otp_code, expiry_time)
+login_store: Dict[str, Tuple[str, datetime]] = {}
 
 
 class EmailRequest(BaseModel):
@@ -29,7 +31,7 @@ class VerifyCodeRequest(BaseModel):
 async def auth_send_code(req: EmailRequest, background_tasks: BackgroundTasks):
     logger.info(f"Auth code requested for {req.email}")
     code = generate_secure_otp()
-    login_store[req.email] = code
+    login_store[req.email] = (code, datetime.now() + timedelta(minutes=10))
     background_tasks.add_task(send_otp_email, req.email, code)
     return {"status": "sent", "message": "Code sent"}
 
@@ -37,13 +39,20 @@ async def auth_send_code(req: EmailRequest, background_tasks: BackgroundTasks):
 @router.post("/verify-code")
 async def auth_verify_code(req: VerifyCodeRequest):
     logger.info(f"Verifying code for {req.email}")
-    stored_code = login_store.get(req.email)
+    stored = login_store.get(req.email)
 
-    if not stored_code:
+    if not stored:
         logger.warning(f"Code expired or not found for {req.email}")
         raise HTTPException(400, "Code expired or not found")
 
-    if stored_code != req.code:
+    code, expiry = stored
+
+    if datetime.now() > expiry:
+        del login_store[req.email]
+        logger.warning(f"Code expired for {req.email}")
+        raise HTTPException(400, "Code expired")
+
+    if code != req.code:
         logger.warning(f"Invalid code attempt for {req.email}")
         raise HTTPException(400, "Invalid code")
 
