@@ -59,3 +59,7 @@ async def auth_verify_code(req: VerifyCodeRequest):
     del login_store[req.email]
     logger.info(f"User {req.email} verified successfully")
     return {"status": "ok", "message": "Verified"}
+
+
+
+    
