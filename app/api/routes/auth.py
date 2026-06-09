@@ -1,5 +1,6 @@
 ﻿import logging
-from typing import Dict
+import time
+from typing import Dict, Tuple
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -13,12 +14,13 @@ router = APIRouter(
     tags=["authentication"],
 )
 
-login_store: Dict[str, str] = {}
+OTP_EXPIRY = 300
+MAX_ATTEMPTS = 5
 
+login_store: Dict[str, Tuple[str, float, int]] = {}
 
 class EmailRequest(BaseModel):
     email: str
-
 
 class VerifyCodeRequest(BaseModel):
     email: str
@@ -27,26 +29,36 @@ class VerifyCodeRequest(BaseModel):
 
 @router.post("/send-code")
 async def auth_send_code(req: EmailRequest, background_tasks: BackgroundTasks):
-    logger.info(f"Auth code requested for {req.email}")
     code = generate_secure_otp()
-    login_store[req.email] = code
+    login_store[req.email] = (str(code), time.time() + OTP_EXPIRY, 0)
+    logger.info(f"OTP stored for {req.email}: '{str(code)}'")
     background_tasks.add_task(send_otp_email, req.email, code)
     return {"status": "sent", "message": "Code sent"}
 
 
 @router.post("/verify-code")
 async def auth_verify_code(req: VerifyCodeRequest):
-    logger.info(f"Verifying code for {req.email}")
-    stored_code = login_store.get(req.email)
+    stored = login_store.get(req.email)
+    logger.info(f"Verifying for {req.email} | stored={stored} | received='{req.code}'")
 
-    if not stored_code:
-        logger.warning(f"Code expired or not found for {req.email}")
+    if not stored:
         raise HTTPException(400, "Code expired or not found")
 
-    if stored_code != req.code:
-        logger.warning(f"Invalid code attempt for {req.email}")
+    code, expiry, attempts = stored
+
+    if time.time() > expiry:
+        del login_store[req.email]
+        raise HTTPException(400, "Code expired")
+
+    if attempts >= MAX_ATTEMPTS:
+        del login_store[req.email]
+        raise HTTPException(429, "Too many attempts. Request a new code.")
+
+    if str(code) != str(req.code).strip():
+        login_store[req.email] = (code, expiry, attempts + 1)
+        logger.warning(f"Wrong code for {req.email}: expected='{code}' got='{req.code}'")
         raise HTTPException(400, "Invalid code")
 
     del login_store[req.email]
-    logger.info(f"User {req.email} verified successfully")
+    logger.info(f"Verified successfully: {req.email}")
     return {"status": "ok", "message": "Verified"}
